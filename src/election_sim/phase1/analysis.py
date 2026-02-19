@@ -33,7 +33,7 @@ def analyze_answers(cfg, llm_client, run_dir: str, persona_by_candidate: Dict[st
     out_dir = f"{run_dir}/phase1"
     ensure_dir(out_dir)
 
-    a_cfg = cfg.phase1.evaluation.analysis
+    a_cfg = getattr(cfg.phase1.evaluation, 'analysis', None) or {}
     if not a_cfg.get("enabled", True):
         return {"enabled": False, "records": []}
 

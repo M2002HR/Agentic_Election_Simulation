@@ -149,6 +149,25 @@ phase2:
     - id: guns
       title: Gun licensing in the US
     questions_per_topic: 5
+  moderator:
+    traits:
+      confidence: 9
+      diligence: 9
+      aggressiveness: 5
+  topics:
+  - id: china
+    title: China and US global power
+  - id: healthcare
+    title: US Healthcare system
+  - id: guns
+    title: Gun licensing in the US
+  questions_per_topic: 5
+  answer_word_limit: 250
+  analysis:
+    enabled: true
+    output_analysis_json: phase2/debate_analysis.json
+    output_summary_json: phase2/debate_summary.json
+  output_transcript_json: phase2/debate_transcript.json
 phase3:
   voters:
     count: 200
