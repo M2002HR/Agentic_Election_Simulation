@@ -40,6 +40,7 @@ def test_phase4_generates_report_pack(tmp_path: Path):
     cfg.phase3.voters.count = 12
     cfg.phase3.values.pool_size = 12
     cfg.phase4.repeats = 2
+    cfg.phase4.scenario_vote_mode = "deterministic"
     cfg.phase4.llm_validation_top_k = 2
     cfg.phase4.llm_validation_sample_size = 4
 
@@ -92,3 +93,43 @@ def test_scenario3_forced_high_wisdom_selection_is_seeded():
     _, _, meta2 = _scenario3(cfg, value_pool, seed=42)
     assert meta1["forced_high_wisdom_count"] == 100
     assert meta1["forced_voter_ids"] == meta2["forced_voter_ids"]
+
+
+def test_phase4_can_run_single_selected_scenario(tmp_path: Path):
+    cfg = load_config("config.quick.yaml")
+    cfg.project.run_dir_base = str(tmp_path)
+    cfg.phase3.voters.count = 12
+    cfg.phase3.values.pool_size = 12
+    cfg.phase4.repeats = 2
+    cfg.phase4.scenario_vote_mode = "deterministic"
+
+    run_dir = tmp_path / "run_single_s4"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    transcript_path = run_dir / cfg.phase3.debate_path
+    transcript_path.parent.mkdir(parents=True, exist_ok=True)
+    transcript_path.write_text(
+        json.dumps(
+            [
+                {
+                    "type": "qa",
+                    "topic": "healthcare",
+                    "question": "How will you reduce costs?",
+                    "first_candidate": "democrat",
+                    "second_candidate": "republican",
+                    "first_answer": "Outcome-based cost controls.",
+                    "second_answer": "Competition and deregulation.",
+                    "follow_up": "What metric in 24 months?",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    logger = setup_logger(str(run_dir))
+
+    out = run_phase4(cfg, _FakeLLM(), run_dir, logger, scenario_ids=["scenario_2"])
+    report_pack_path = Path(out["report_pack_path"])
+    pack = json.loads(report_pack_path.read_text(encoding="utf-8"))
+
+    assert pack["scenario_outputs"]["scenario_2"].get("skipped") is not True
+    assert pack["scenario_outputs"]["scenario_1"]["skip_reason"] == "not_selected"
+    assert pack["scenario_outputs"]["scenario_3"]["skip_reason"] == "not_selected"

@@ -21,6 +21,21 @@ def make_run_id() -> str:
     return time.strftime("%Y%m%d_%H%M%S")
 
 
+def _normalize_scenario_ids(raw: list[str] | None) -> list[str] | None:
+    if not raw:
+        return None
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        for part in str(item).split(","):
+            sid = part.strip()
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            out.append(sid)
+    return out or None
+
+
 def _dump_resolved_config_fallback(cfg) -> str:
     try:
         from election_sim.config import dump_resolved_config  # type: ignore
@@ -115,17 +130,25 @@ def cmd_phase3(cfg_path: str, run_id: str | None = None) -> None:
     print(f"Run complete: {run_dir}")
 
 
-def cmd_phase4(cfg_path: str, run_id: str | None = None) -> None:
+def cmd_phase4(
+    cfg_path: str,
+    run_id: str | None = None,
+    scenario_ids: list[str] | None = None,
+) -> None:
     cfg = load_config(cfg_path)
     run_dir, logger = _init_run(cfg, run_id=run_id)
     logger.info("Command start: phase4 | run_dir=%s", run_dir)
     llm = build_llm(cfg, run_dir, model_name=cfg.llm.voter_model_name or cfg.llm.model_name)
-    run_phase4(cfg, llm, Path(run_dir), logger)
+    run_phase4(cfg, llm, Path(run_dir), logger, scenario_ids=scenario_ids)
     logger.info("Command finish: phase4")
     print(f"Run complete: {run_dir}")
 
 
-def cmd_all(cfg_path: str, run_id: str | None = None) -> None:
+def cmd_all(
+    cfg_path: str,
+    run_id: str | None = None,
+    scenario_ids: list[str] | None = None,
+) -> None:
     cfg = load_config(cfg_path)
     run_dir, logger = _init_run(cfg, run_id=run_id)
     logger.info("Command start: all | run_dir=%s", run_dir)
@@ -139,18 +162,22 @@ def cmd_all(cfg_path: str, run_id: str | None = None) -> None:
     llm_phase3 = build_llm(cfg, run_dir, model_name=cfg.llm.voter_model_name or cfg.llm.model_name)
     run_phase3(cfg, llm_phase3, Path(run_dir), logger)
 
-    run_phase4(cfg, llm_phase3, Path(run_dir), logger)
-    run_phase5(cfg, llm_phase3, Path(run_dir), logger)
+    run_phase4(cfg, llm_phase3, Path(run_dir), logger, scenario_ids=scenario_ids)
+    run_phase5(cfg, llm_phase3, Path(run_dir), logger, scenario_ids=scenario_ids)
     logger.info("Command finish: all")
     print(f"Run complete: {run_dir}")
 
 
-def cmd_phase5(cfg_path: str, run_id: str | None = None) -> None:
+def cmd_phase5(
+    cfg_path: str,
+    run_id: str | None = None,
+    scenario_ids: list[str] | None = None,
+) -> None:
     cfg = load_config(cfg_path)
     run_dir, logger = _init_run(cfg, run_id=run_id)
     logger.info("Command start: phase5 | run_dir=%s", run_dir)
     llm = build_llm(cfg, run_dir, model_name=cfg.llm.voter_model_name or cfg.llm.model_name)
-    run_phase5(cfg, llm, Path(run_dir), logger)
+    run_phase5(cfg, llm, Path(run_dir), logger, scenario_ids=scenario_ids)
     logger.info("Command finish: phase5")
     print(f"Run complete: {run_dir}")
 
@@ -163,7 +190,16 @@ def main(argv: list[str] | None = None) -> None:
     )
     p.add_argument("--config", default="config.yaml")
     p.add_argument("--run-id", default=None)
+    p.add_argument(
+        "--scenario",
+        action="append",
+        default=None,
+        help="Scenario ID to run (repeatable or comma-separated), e.g. --scenario scenario_4",
+    )
     args = p.parse_args(argv)
+    scenario_ids = _normalize_scenario_ids(args.scenario)
+    if scenario_ids and args.command not in {"phase4", "phase5", "all"}:
+        p.error("--scenario is only supported for commands: phase4, phase5, all")
 
     if args.command == "smoke-test":
         cmd_smoke_test(args.config, args.run_id)
@@ -174,11 +210,11 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "phase3":
         cmd_phase3(args.config, args.run_id)
     elif args.command == "phase4":
-        cmd_phase4(args.config, args.run_id)
+        cmd_phase4(args.config, args.run_id, scenario_ids)
     elif args.command == "phase5":
-        cmd_phase5(args.config, args.run_id)
+        cmd_phase5(args.config, args.run_id, scenario_ids)
     elif args.command == "all":
-        cmd_all(args.config, args.run_id)
+        cmd_all(args.config, args.run_id, scenario_ids)
     else:
         raise SystemExit(2)
 

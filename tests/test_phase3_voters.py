@@ -45,3 +45,20 @@ def test_generate_voters_respects_distribution_counts_exactly():
     fear_medium = sum(1 for v in voters if 4 <= v.traits["fear"] <= 6)
     fear_high = sum(1 for v in voters if v.traits["fear"] >= 7)
     assert (fear_low, fear_medium, fear_high) == (60, 80, 60)
+
+
+def test_generate_voters_seeded_random_uses_unique_profiles_when_possible():
+    value_pool = [
+        {"profile_id": f"vp_{i:03d}", "china": f"c{i}", "healthcare": f"h{i}", "guns": f"g{i}"}
+        for i in range(20)
+    ]
+    voters = generate_voters(
+        count=20,
+        trait_names=["wisdom", "fear", "anger", "adaptability", "distrust"],
+        seed=7,
+        trait_distributions={},
+        value_pool=value_pool,
+        assignment_mode="seeded_random",
+    )
+    profile_ids = [v.value_profile_id for v in voters]
+    assert len(set(profile_ids)) == 20

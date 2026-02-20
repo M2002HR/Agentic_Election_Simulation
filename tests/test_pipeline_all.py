@@ -71,9 +71,11 @@ def test_full_pipeline_builds_core_artifacts(tmp_path: Path):
     cfg.phase3.voters.count = 12
     cfg.phase3.values.pool_size = 12
     cfg.phase4.repeats = 2
+    cfg.phase4.scenario_vote_mode = "deterministic"
     cfg.phase4.llm_validation_top_k = 2
     cfg.phase4.llm_validation_sample_size = 4
     cfg.phase5.repeats = 2
+    cfg.phase5.scenario_vote_mode = "deterministic"
     cfg.phase5.llm_validation_sample_size = 4
 
     run_dir = tmp_path / "run"

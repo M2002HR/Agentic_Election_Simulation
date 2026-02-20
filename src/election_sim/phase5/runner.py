@@ -144,6 +144,9 @@ def _scenario_voters(
         value_pool=value_pool,
         assignment_mode=cfg.phase3.values.assignment_mode,
         source_scenario=source_scenario,
+        unique_assignment_when_possible=bool(
+            getattr(cfg.phase3.values, "unique_assignment_when_possible", True)
+        ),
     )
 
 
@@ -259,6 +262,11 @@ def _simulate_monte_carlo(
     *,
     repeats: int,
     seed: int,
+    llm=None,
+    debate_digest: dict[str, Any] | None = None,
+    logger=None,
+    use_llm: bool = False,
+    progress_label: str = "Phase5 Sim",
 ) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     dem_wins = 0
@@ -266,19 +274,36 @@ def _simulate_monte_carlo(
     tie = 0
     margin_pct: list[float] = []
     total_repeats = max(1, int(repeats))
-    for i in range(total_repeats):
-        summary = _simulate_repeat(voters, candidate_profiles, seed=seed + i * 97)
-        rows.append(summary)
-        w = summary.get("winner")
-        if w == "democrat":
-            dem_wins += 1
-        elif w == "republican":
-            rep_wins += 1
-        else:
-            tie += 1
-        dem_p = float(summary.get("percentages", {}).get("democrat", 0.0))
-        rep_p = float(summary.get("percentages", {}).get("republican", 0.0))
-        margin_pct.append(dem_p - rep_p)
+    if use_llm and (llm is None or debate_digest is None or logger is None):
+        raise ValueError("LLM simulation requires llm, debate_digest, and logger")
+    with ProgressBar(total_repeats, f"{progress_label} Repeats", logger=logger) as rbar:
+        for i in range(total_repeats):
+            if use_llm:
+                votes = vote_voters(
+                    voters,
+                    llm=llm,
+                    debate_digest=debate_digest,
+                    candidate_profiles=candidate_profiles,
+                    logger=logger,
+                    use_llm=True,
+                    progress_desc=f"{progress_label} Vote R{i+1}/{total_repeats}",
+                    meta_prefix={"phase": "phase5", "step": "scenario_vote", "repeat": i},
+                )
+                summary = summarize_votes(votes)
+            else:
+                summary = _simulate_repeat(voters, candidate_profiles, seed=seed + i * 97)
+            rows.append(summary)
+            w = summary.get("winner")
+            if w == "democrat":
+                dem_wins += 1
+            elif w == "republican":
+                rep_wins += 1
+            else:
+                tie += 1
+            dem_p = float(summary.get("percentages", {}).get("democrat", 0.0))
+            rep_p = float(summary.get("percentages", {}).get("republican", 0.0))
+            margin_pct.append(dem_p - rep_p)
+            rbar.update(1, detail=f"repeat {i+1}/{total_repeats}")
     return {
         "repeats": total_repeats,
         "win_rates": {
@@ -705,13 +730,31 @@ def _validate_report_pack_schema(pack: dict[str, Any]) -> None:
             raise ValueError(f"phase5 report_pack.scenario_outputs missing {sid}")
 
 
-def run_phase5(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
+def run_phase5(
+    cfg,
+    llm,
+    run_dir: Path,
+    logger,
+    scenario_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    selected = set(scenario_ids or [])
+    known_ids = {
+        "scenario_6_republican_win",
+        "scenario_7_healthcare_shock",
+        "scenario_8_polarized_tossup",
+    }
+    unknown = sorted(selected - known_ids)
+    if unknown:
+        logger.warning("Phase5 unknown scenario ids ignored: %s", ",".join(unknown))
+
     logger.info(
         "Phase5 started | run_dir=%s repeats=%s llm_validation=%s",
         run_dir,
         getattr(cfg.phase5, "repeats", 10),
         getattr(cfg.phase5, "enable_llm_validation", True),
     )
+    if selected:
+        logger.info("Phase5 scenario filter active: %s", ",".join(sorted(selected & known_ids)))
     run_dir.mkdir(parents=True, exist_ok=True)
 
     transcript = None
@@ -749,6 +792,12 @@ def run_phase5(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
 
     repeats = int(getattr(cfg.phase5, "repeats", 10) or 10)
     seed = int(getattr(cfg.project, "random_seed", 0) or 0)
+    global_vote_mode = str(getattr(cfg.phase5, "scenario_vote_mode", "deterministic") or "deterministic").lower()
+    if global_vote_mode not in {"deterministic", "llm_full"}:
+        logger.warning("Phase5 invalid scenario_vote_mode=%s; fallback=deterministic", global_vote_mode)
+        global_vote_mode = "deterministic"
+    if global_vote_mode == "llm_full":
+        logger.warning("Phase5 scenario_vote_mode=llm_full: full-population LLM voting will be expensive.")
     sample_size = int(getattr(cfg.phase5, "llm_validation_sample_size", 24) or 24)
     do_llm_validation = bool(getattr(cfg.phase5, "enable_llm_validation", True)) and transcript is not None
     sensitivity_shift = float(getattr(cfg.phase5, "confidence_shift_sensitivity", 8.0) or 8.0)
@@ -761,11 +810,33 @@ def run_phase5(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
         ("scenario_8_polarized_tossup", _scenario8_polarized_tossup),
     ]
 
+    def _is_selected(sid: str) -> bool:
+        return (not selected) or (sid in selected)
+
+    def _scenario_vote_mode(overrides: dict[str, Any]) -> str:
+        mode = str(_get_override(overrides, "vote_mode", global_vote_mode) or global_vote_mode).lower()
+        if mode not in {"deterministic", "llm_full"}:
+            return global_vote_mode
+        return mode
+
     with ProgressBar(len(definitions), "Phase5 Scenarios", logger=logger) as phase5_bar:
         for idx, (sid, fn) in enumerate(definitions, start=1):
             scfg = _scenario_cfg(cfg, sid)
+            sid_vote_mode = _scenario_vote_mode(scfg.get("overrides", {}))
+            if not _is_selected(sid):
+                payload = {"scenario_id": sid, "description": sid, "skipped": True, "skip_reason": "not_selected"}
+                scenarios_out[sid] = payload
+                write_json(_phase5_path_for_scenario(cfg, run_dir, sid), payload)
+                logger.info("Phase5 %s skipped (not selected).", sid)
+                phase5_bar.update(1, detail=sid)
+                continue
             if not scfg["enabled"]:
-                payload = {"scenario_id": sid, "description": sid, "skipped": True}
+                payload = {
+                    "scenario_id": sid,
+                    "description": sid,
+                    "skipped": True,
+                    "skip_reason": "disabled_in_config",
+                }
                 scenarios_out[sid] = payload
                 write_json(_phase5_path_for_scenario(cfg, run_dir, sid), payload)
                 logger.info("Phase5 %s skipped by config.", sid)
@@ -780,23 +851,57 @@ def run_phase5(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
                 sensitivity_shift=sensitivity_shift,
                 overrides=scfg["overrides"],
             )
-            if do_llm_validation:
-                llm_val = _llm_validation(
-                    llm,
+            if sid_vote_mode == "llm_full":
+                sim = _simulate_monte_carlo(
                     voters,
-                    digest,
                     profiles,
-                    sample_size=sample_size,
-                    seed=seed + idx * 211,
+                    repeats=repeats,
+                    seed=seed + idx * 1000 + 17,
+                    llm=llm,
+                    debate_digest=digest,
                     logger=logger,
-                    label=f"Phase5 {sid} Validate",
+                    use_llm=True,
+                    progress_label=f"Phase5 {sid}",
                 )
-                payload["defensibility"]["llm_validation"] = llm_val
+                payload["simulation"] = sim
+                payload["estimated_winner"] = max(sim["win_rates"], key=sim["win_rates"].get)
+                expected = str(payload.get("expected_winner", "")).lower()
+                if expected in {"democrat", "republican"}:
+                    payload["expectation_met"] = payload["estimated_winner"] == expected
+                base_cf = payload.get("defensibility", {}).get("counterfactual_baseline")
+                if isinstance(base_cf, dict) and "avg_margin_pct_dem_minus_rep" in base_cf:
+                    base_margin = float(base_cf.get("avg_margin_pct_dem_minus_rep", 0.0))
+                    base_cf["delta_margin_vs_baseline"] = (
+                        float(sim.get("avg_margin_pct_dem_minus_rep", 0.0)) - base_margin
+                    )
+                payload["simulation_mode"] = "llm_full"
+            else:
+                payload["simulation_mode"] = "deterministic"
+
+            if do_llm_validation:
+                if sid_vote_mode == "llm_full":
+                    payload.setdefault("defensibility", {})["llm_validation"] = {
+                        "skipped": True,
+                        "reason": "full_llm_simulation_enabled",
+                    }
+                else:
+                    llm_val = _llm_validation(
+                        llm,
+                        voters,
+                        digest,
+                        profiles,
+                        sample_size=sample_size,
+                        seed=seed + idx * 211,
+                        logger=logger,
+                        label=f"Phase5 {sid} Validate",
+                    )
+                    payload["defensibility"]["llm_validation"] = llm_val
             scenarios_out[sid] = payload
             write_json(_phase5_path_for_scenario(cfg, run_dir, sid), payload)
             logger.info(
-                "Phase5 %s complete | estimated_winner=%s rep_win_rate=%.3f dem_win_rate=%.3f avg_margin=%.3f",
+                "Phase5 %s complete | mode=%s estimated_winner=%s rep_win_rate=%.3f dem_win_rate=%.3f avg_margin=%.3f",
                 sid,
+                payload.get("simulation_mode", "deterministic"),
                 payload.get("estimated_winner"),
                 float(payload.get("simulation", {}).get("win_rates", {}).get("republican", 0.0)),
                 float(payload.get("simulation", {}).get("win_rates", {}).get("democrat", 0.0)),
@@ -855,15 +960,16 @@ def run_phase5(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
         "metadata": {
             "run_id": run_dir.name,
             "repeats": repeats,
+            "scenario_vote_mode": global_vote_mode,
             "llm_validation_enabled": do_llm_validation,
             "llm_validation_sample_size": sample_size,
             "confidence_shift_sensitivity": sensitivity_shift,
             "seed": seed,
         },
         "assumptions": [
-            "Phase5 scenarios use deterministic Monte Carlo core for reproducible comparison.",
+            "Phase5 scenario simulation mode is configurable: deterministic or llm_full.",
             "Each scenario includes confidence-shift sensitivity checks for robustness.",
-            "LLM validation is sampled and optional; deterministic simulation is the primary basis.",
+            "LLM validation is sampled and optional (auto-skipped when llm_full is active).",
         ],
         "phase_artifacts": {
             "phase3_value_pool": _safe_read_json(phase3_values_path),

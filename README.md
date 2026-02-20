@@ -46,10 +46,10 @@ Artifacts:
 - `phase2/debate_summary.json`
 
 ## Phase 3
-- Value pool generation (`china`, `healthcare`, `guns`) with dedupe and fallback
+- Value pool generation (`china`, `healthcare`, `guns`) with strict dedupe + near-duplicate filtering + rich fallback
 - Robust parsing for partially malformed model JSON in value generation
 - Configurable voter count and trait distributions
-- Seeded value assignment to voters
+- Seeded value assignment to voters (unique-per-voter when pool size is sufficient)
 - Voting with `choice`, `confidence`, `reason` and deterministic fallback
 - Compact debate digest to reduce token usage
 
@@ -67,6 +67,7 @@ Artifacts:
 - Scenario 4 optimization over Democrat core traits
 - Scenario 5 optimization over voter trait distributions
 - Search modes: `hybrid`, `fast_approx`, `full_llm`
+- Scenario vote mode: `deterministic` or `llm_full` (`llm_full` = real LLM vote for all voters)
 - Report pack schema validation
 
 Artifacts:
@@ -81,7 +82,7 @@ Artifacts:
 - `scenario_7_healthcare_shock`: healthcare-cost shock with issue-salience shift
 - `scenario_8_polarized_tossup`: highly polarized near-tossup stress scenario
 - Defensibility layer per scenario:
-  - sampled LLM validation
+  - sampled LLM validation (auto-skipped when `scenario_vote_mode=llm_full`)
   - confidence-shift sensitivity analysis
 - Comparative table and report-ready pack
 
@@ -108,6 +109,7 @@ Available commands:
 Common flags:
 - `--config <path>`
 - `--run-id <id>`
+- `--scenario <id>` (only for `phase4`, `phase5`, `all`; repeatable or comma-separated)
 
 Examples:
 
@@ -119,6 +121,14 @@ PYTHONPATH=src python -m election_sim phase3 --config config.yaml
 PYTHONPATH=src python -m election_sim phase4 --config config.yaml
 PYTHONPATH=src python -m election_sim phase5 --config config.yaml
 PYTHONPATH=src python -m election_sim all --config config.yaml
+```
+
+Run a single scenario:
+
+```bash
+PYTHONPATH=src python -m election_sim phase4 --config config.yaml --scenario scenario_3
+PYTHONPATH=src python -m election_sim phase5 --config config.yaml --scenario scenario_6_republican_win
+PYTHONPATH=src python -m election_sim all --config config.yaml --scenario scenario_4 --scenario scenario_8_polarized_tossup
 ```
 
 Reuse a previous run directory:
@@ -187,6 +197,7 @@ Recommended workflow:
 
 ## Phase 4
 - `phase4.repeats`
+- `phase4.scenario_vote_mode`
 - `phase4.certainty_threshold`
 - `phase4.search_mode`
 - `phase4.llm_validation_top_k`
@@ -196,12 +207,16 @@ Recommended workflow:
 
 ## Phase 5
 - `phase5.repeats`
+- `phase5.scenario_vote_mode`
 - `phase5.enable_llm_validation`
 - `phase5.llm_validation_sample_size`
 - `phase5.confidence_shift_sensitivity`
 - `phase5.margin_pct_alert_threshold`
 - `phase5.scenarios[].enabled`
 - `phase5.scenarios[].overrides`
+
+Note:
+- `scenario_vote_mode=llm_full` can be very expensive with `voters.count=200` and high repeats.
 
 ## Quick Validation Run
 

@@ -191,6 +191,9 @@ def _scenario_voters(
         value_pool=value_pool,
         assignment_mode=cfg.phase3.values.assignment_mode,
         source_scenario=source_scenario,
+        unique_assignment_when_possible=bool(
+            getattr(cfg.phase3.values, "unique_assignment_when_possible", True)
+        ),
     )
 
 
@@ -230,31 +233,54 @@ def _simulate_monte_carlo(
     *,
     repeats: int,
     seed: int,
+    llm=None,
+    debate_digest: dict[str, Any] | None = None,
+    logger=None,
+    use_llm: bool = False,
+    progress_label: str = "Phase4 Sim",
 ) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     dem_wins = 0
     rep_wins = 0
     tie = 0
     margin_pct: list[float] = []
-    for i in range(max(1, repeats)):
-        summary = _simulate_repeat(voters, candidate_profiles, seed=seed + i * 97)
-        rows.append(summary)
-        w = summary.get("winner")
-        if w == "democrat":
-            dem_wins += 1
-        elif w == "republican":
-            rep_wins += 1
-        else:
-            tie += 1
-        dem_p = float(summary.get("percentages", {}).get("democrat", 0.0))
-        rep_p = float(summary.get("percentages", {}).get("republican", 0.0))
-        margin_pct.append(dem_p - rep_p)
+    total_repeats = max(1, int(repeats))
+    if use_llm and (llm is None or debate_digest is None or logger is None):
+        raise ValueError("LLM simulation requires llm, debate_digest, and logger")
+    with ProgressBar(total_repeats, f"{progress_label} Repeats", logger=logger) as rbar:
+        for i in range(total_repeats):
+            if use_llm:
+                votes = vote_voters(
+                    voters,
+                    llm=llm,
+                    debate_digest=debate_digest,
+                    candidate_profiles=candidate_profiles,
+                    logger=logger,
+                    use_llm=True,
+                    progress_desc=f"{progress_label} Vote R{i+1}/{total_repeats}",
+                    meta_prefix={"phase": "phase4", "step": "scenario_vote", "repeat": i},
+                )
+                summary = summarize_votes(votes)
+            else:
+                summary = _simulate_repeat(voters, candidate_profiles, seed=seed + i * 97)
+            rows.append(summary)
+            w = summary.get("winner")
+            if w == "democrat":
+                dem_wins += 1
+            elif w == "republican":
+                rep_wins += 1
+            else:
+                tie += 1
+            dem_p = float(summary.get("percentages", {}).get("democrat", 0.0))
+            rep_p = float(summary.get("percentages", {}).get("republican", 0.0))
+            margin_pct.append(dem_p - rep_p)
+            rbar.update(1, detail=f"repeat {i+1}/{total_repeats}")
     return {
-        "repeats": max(1, repeats),
+        "repeats": total_repeats,
         "win_rates": {
-            "democrat": dem_wins / max(1, repeats),
-            "republican": rep_wins / max(1, repeats),
-            "tie": tie / max(1, repeats),
+            "democrat": dem_wins / total_repeats,
+            "republican": rep_wins / total_repeats,
+            "tie": tie / total_repeats,
         },
         "avg_margin_pct_dem_minus_rep": (sum(margin_pct) / len(margin_pct)) if margin_pct else 0.0,
         "repeat_summaries": rows,
@@ -444,6 +470,7 @@ def _scenario4_optimize(
     value_pool: list[dict[str, Any]],
     seed: int,
     logger,
+    final_vote_mode: str,
     overrides: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     overrides = overrides or {}
@@ -613,11 +640,23 @@ def _scenario4_optimize(
             "traits": dict(rep_fixed),
         },
     }
-    final_sim = _simulate_monte_carlo(voters, best_profiles, repeats=repeats, seed=seed + 404)
+    use_llm_final = str(final_vote_mode).lower() == "llm_full"
+    final_sim = _simulate_monte_carlo(
+        voters,
+        best_profiles,
+        repeats=repeats,
+        seed=seed + 404,
+        llm=llm,
+        debate_digest=debate_digest,
+        logger=logger,
+        use_llm=use_llm_final,
+        progress_label="Phase4 S4 Final",
+    )
     extra = {
         **base_meta,
         "optimization_goal": "Maximize democrat margin with certainty constraint.",
         "search_mode": search_mode,
+        "final_vote_mode": "llm_full" if use_llm_final else "deterministic",
         "certainty_threshold": threshold,
         "certainty_pass": final_sim["win_rates"]["democrat"] >= threshold,
         "best_democrat_traits": best_profiles["democrat"]["traits"],
@@ -640,6 +679,7 @@ def _scenario5_optimize(
     value_pool: list[dict[str, Any]],
     seed: int,
     logger,
+    final_vote_mode: str,
     overrides: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     overrides = overrides or {}
@@ -803,11 +843,23 @@ def _scenario5_optimize(
         source_scenario="scenario_5_best",
         distribution_overrides=best_dist,
     )
-    final_sim = _simulate_monte_carlo(best_voters, profiles, repeats=repeats, seed=seed + 606)
+    use_llm_final = str(final_vote_mode).lower() == "llm_full"
+    final_sim = _simulate_monte_carlo(
+        best_voters,
+        profiles,
+        repeats=repeats,
+        seed=seed + 606,
+        llm=llm,
+        debate_digest=debate_digest,
+        logger=logger,
+        use_llm=use_llm_final,
+        progress_label="Phase4 S5 Final",
+    )
     extra = {
         **base_meta,
         "optimization_goal": "Choose voter trait distributions for a democrat landslide.",
         "search_mode": search_mode,
+        "final_vote_mode": "llm_full" if use_llm_final else "deterministic",
         "certainty_threshold": threshold,
         "certainty_pass": final_sim["win_rates"]["democrat"] >= threshold,
         "best_distribution": best_dist,
@@ -823,7 +875,19 @@ def _scenario5_optimize(
     return profiles, final_sim, {"meta": extra, "trace": trace, "best_voters": best_voters}
 
 
-def run_phase4(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
+def run_phase4(
+    cfg,
+    llm,
+    run_dir: Path,
+    logger,
+    scenario_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    selected = set(scenario_ids or [])
+    known_ids = {"scenario_1", "scenario_2", "scenario_3", "scenario_4", "scenario_5"}
+    unknown = sorted(selected - known_ids)
+    if unknown:
+        logger.warning("Phase4 unknown scenario ids ignored: %s", ",".join(unknown))
+
     logger.info(
         "Phase4 started | run_dir=%s repeats=%s certainty_threshold=%s search_mode=%s",
         run_dir,
@@ -831,6 +895,8 @@ def run_phase4(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
         getattr(cfg.phase4, "certainty_threshold", 0.9),
         getattr(cfg.phase4, "search_mode", "hybrid"),
     )
+    if selected:
+        logger.info("Phase4 scenario filter active: %s", ",".join(sorted(selected & known_ids)))
     run_dir.mkdir(parents=True, exist_ok=True)
     transcript_path = _find_transcript(cfg, run_dir)
     transcript = read_json(transcript_path)
@@ -862,6 +928,14 @@ def run_phase4(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
 
     repeats = int(getattr(cfg.phase4, "repeats", 10) or 10)
     seed = int(getattr(cfg.project, "random_seed", 0) or 0)
+    global_vote_mode = str(getattr(cfg.phase4, "scenario_vote_mode", "deterministic") or "deterministic").lower()
+    if global_vote_mode not in {"deterministic", "llm_full"}:
+        logger.warning("Phase4 invalid scenario_vote_mode=%s; fallback=deterministic", global_vote_mode)
+        global_vote_mode = "deterministic"
+    if global_vote_mode == "llm_full":
+        logger.warning(
+            "Phase4 scenario_vote_mode=llm_full: each scenario repeat runs full-population LLM voting."
+        )
     scenarios_out: dict[str, Any] = {}
     optimization_trace: dict[str, Any] = {}
 
@@ -891,14 +965,67 @@ def run_phase4(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
         "scenario_5": "Optimize voter trait distributions for democrat landslide",
     }
 
+    def _is_selected(sid: str) -> bool:
+        return (not selected) or (sid in selected)
+
+    def _skipped_payload(sid: str, reason: str) -> dict[str, Any]:
+        return {
+            "scenario_id": sid,
+            "description": descriptions[sid],
+            "skipped": True,
+            "skip_reason": reason,
+        }
+
+    def _scenario_vote_mode(overrides: dict[str, Any]) -> str:
+        mode = str(_get_override(overrides, "vote_mode", global_vote_mode) or global_vote_mode).lower()
+        if mode not in {"deterministic", "llm_full"}:
+            return global_vote_mode
+        return mode
+
+    def _simulate_for_scenario(
+        voters: list[Voter],
+        profiles: dict[str, Any],
+        *,
+        repeats: int,
+        seed: int,
+        vote_mode: str,
+        label: str,
+    ) -> dict[str, Any]:
+        return _simulate_monte_carlo(
+            voters,
+            profiles,
+            repeats=repeats,
+            seed=seed,
+            llm=llm,
+            debate_digest=digest,
+            logger=logger,
+            use_llm=(vote_mode == "llm_full"),
+            progress_label=label,
+        )
+
     with ProgressBar(5, "Phase4 Scenarios", logger=logger) as phase4_bar:
         # Scenario 1
         s1_cfg = _scenario_cfg(cfg, "scenario_1")
-        if s1_cfg["enabled"]:
+        if not _is_selected("scenario_1"):
+            s1 = _skipped_payload("scenario_1", "not_selected")
+            scenarios_out["scenario_1"] = s1
+            s1_voters = []
+            s1_sim = {"repeat_summaries": [], "win_rates": {"democrat": 0.0, "republican": 0.0}}
+            logger.info("Phase4 scenario_1 skipped (not selected).")
+        elif s1_cfg["enabled"]:
             s1_profiles, s1_voters, s1_meta = _scenario1(cfg, value_pool, seed, overrides=s1_cfg["overrides"])
-            s1_sim = _simulate_monte_carlo(s1_voters, s1_profiles, repeats=repeats, seed=seed + 1)
+            s1_mode = _scenario_vote_mode(s1_cfg["overrides"])
+            s1_sim = _simulate_for_scenario(
+                s1_voters,
+                s1_profiles,
+                repeats=repeats,
+                seed=seed + 1,
+                vote_mode=s1_mode,
+                label="Phase4 S1",
+            )
             s1 = _scenario_result_payload("scenario_1", descriptions["scenario_1"], s1_voters, s1_sim, s1_meta)
             s1["candidate_profiles"] = s1_profiles
+            s1["simulation_mode"] = s1_mode
             scenarios_out["scenario_1"] = s1
             logger.info(
                 "Phase4 scenario_1 complete | dem_win_rate=%.3f avg_margin=%.3f",
@@ -906,7 +1033,7 @@ def run_phase4(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
                 s1_sim["avg_margin_pct_dem_minus_rep"],
             )
         else:
-            s1 = {"scenario_id": "scenario_1", "description": descriptions["scenario_1"], "skipped": True}
+            s1 = _skipped_payload("scenario_1", "disabled_in_config")
             scenarios_out["scenario_1"] = s1
             s1_voters = []
             s1_sim = {"repeat_summaries": [], "win_rates": {"democrat": 0.0, "republican": 0.0}}
@@ -916,11 +1043,26 @@ def run_phase4(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
 
         # Scenario 2
         s2_cfg = _scenario_cfg(cfg, "scenario_2")
-        if s2_cfg["enabled"]:
+        if not _is_selected("scenario_2"):
+            s2 = _skipped_payload("scenario_2", "not_selected")
+            scenarios_out["scenario_2"] = s2
+            s2_voters = []
+            s2_sim = {"repeat_summaries": [], "win_rates": {"democrat": 0.0, "republican": 0.0}}
+            logger.info("Phase4 scenario_2 skipped (not selected).")
+        elif s2_cfg["enabled"]:
             s2_profiles, s2_voters, s2_meta = _scenario2(cfg, value_pool, seed, overrides=s2_cfg["overrides"])
-            s2_sim = _simulate_monte_carlo(s2_voters, s2_profiles, repeats=repeats, seed=seed + 2)
+            s2_mode = _scenario_vote_mode(s2_cfg["overrides"])
+            s2_sim = _simulate_for_scenario(
+                s2_voters,
+                s2_profiles,
+                repeats=repeats,
+                seed=seed + 2,
+                vote_mode=s2_mode,
+                label="Phase4 S2",
+            )
             s2 = _scenario_result_payload("scenario_2", descriptions["scenario_2"], s2_voters, s2_sim, s2_meta)
             s2["candidate_profiles"] = s2_profiles
+            s2["simulation_mode"] = s2_mode
             scenarios_out["scenario_2"] = s2
             logger.info(
                 "Phase4 scenario_2 complete | dem_win_rate=%.3f avg_margin=%.3f",
@@ -928,7 +1070,7 @@ def run_phase4(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
                 s2_sim["avg_margin_pct_dem_minus_rep"],
             )
         else:
-            s2 = {"scenario_id": "scenario_2", "description": descriptions["scenario_2"], "skipped": True}
+            s2 = _skipped_payload("scenario_2", "disabled_in_config")
             scenarios_out["scenario_2"] = s2
             s2_voters = []
             s2_sim = {"repeat_summaries": [], "win_rates": {"democrat": 0.0, "republican": 0.0}}
@@ -938,11 +1080,26 @@ def run_phase4(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
 
         # Scenario 3
         s3_cfg = _scenario_cfg(cfg, "scenario_3")
-        if s3_cfg["enabled"]:
+        if not _is_selected("scenario_3"):
+            s3 = _skipped_payload("scenario_3", "not_selected")
+            scenarios_out["scenario_3"] = s3
+            s3_voters = []
+            s3_sim = {"repeat_summaries": [], "win_rates": {"democrat": 0.0, "republican": 0.0}}
+            logger.info("Phase4 scenario_3 skipped (not selected).")
+        elif s3_cfg["enabled"]:
             s3_profiles, s3_voters, s3_meta = _scenario3(cfg, value_pool, seed, overrides=s3_cfg["overrides"])
-            s3_sim = _simulate_monte_carlo(s3_voters, s3_profiles, repeats=repeats, seed=seed + 3)
+            s3_mode = _scenario_vote_mode(s3_cfg["overrides"])
+            s3_sim = _simulate_for_scenario(
+                s3_voters,
+                s3_profiles,
+                repeats=repeats,
+                seed=seed + 3,
+                vote_mode=s3_mode,
+                label="Phase4 S3",
+            )
             s3 = _scenario_result_payload("scenario_3", descriptions["scenario_3"], s3_voters, s3_sim, s3_meta)
             s3["candidate_profiles"] = s3_profiles
+            s3["simulation_mode"] = s3_mode
             scenarios_out["scenario_3"] = s3
             logger.info(
                 "Phase4 scenario_3 complete | forced_count=%s dem_win_rate=%.3f avg_margin=%.3f",
@@ -951,7 +1108,7 @@ def run_phase4(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
                 s3_sim["avg_margin_pct_dem_minus_rep"],
             )
         else:
-            s3 = {"scenario_id": "scenario_3", "description": descriptions["scenario_3"], "skipped": True}
+            s3 = _skipped_payload("scenario_3", "disabled_in_config")
             scenarios_out["scenario_3"] = s3
             s3_voters = []
             s3_sim = {"repeat_summaries": [], "win_rates": {"democrat": 0.0, "republican": 0.0}}
@@ -961,7 +1118,13 @@ def run_phase4(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
 
         # Scenario 4
         s4_cfg = _scenario_cfg(cfg, "scenario_4")
-        if s4_cfg["enabled"]:
+        if not _is_selected("scenario_4"):
+            s4 = _skipped_payload("scenario_4", "not_selected")
+            scenarios_out["scenario_4"] = s4
+            optimization_trace["scenario_4"] = {"skipped": True, "skip_reason": "not_selected"}
+            logger.info("Phase4 scenario_4 skipped (not selected).")
+        elif s4_cfg["enabled"]:
+            s4_mode = _scenario_vote_mode(s4_cfg["overrides"])
             s4_profiles, s4_sim, s4_extra = _scenario4_optimize(
                 cfg,
                 llm,
@@ -969,6 +1132,7 @@ def run_phase4(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
                 value_pool,
                 seed,
                 logger,
+                final_vote_mode=s4_mode,
                 overrides=s4_cfg["overrides"],
             )
             s4 = _scenario_result_payload(
@@ -979,6 +1143,7 @@ def run_phase4(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
                 s4_extra["meta"],
             )
             s4["best_candidate_profiles"] = s4_profiles
+            s4["simulation_mode"] = s4_mode
             scenarios_out["scenario_4"] = s4
             optimization_trace["scenario_4"] = s4_extra["trace"]
             logger.info(
@@ -988,16 +1153,22 @@ def run_phase4(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
                 s4_extra["meta"].get("certainty_pass"),
             )
         else:
-            s4 = {"scenario_id": "scenario_4", "description": descriptions["scenario_4"], "skipped": True}
+            s4 = _skipped_payload("scenario_4", "disabled_in_config")
             scenarios_out["scenario_4"] = s4
-            optimization_trace["scenario_4"] = {"skipped": True}
+            optimization_trace["scenario_4"] = {"skipped": True, "skip_reason": "disabled_in_config"}
             logger.info("Phase4 scenario_4 skipped by config.")
         write_json(_phase4_path_for_scenario(cfg, run_dir, "scenario_4"), scenarios_out["scenario_4"])
         phase4_bar.update(1, detail="scenario_4")
 
         # Scenario 5
         s5_cfg = _scenario_cfg(cfg, "scenario_5")
-        if s5_cfg["enabled"]:
+        if not _is_selected("scenario_5"):
+            s5 = _skipped_payload("scenario_5", "not_selected")
+            scenarios_out["scenario_5"] = s5
+            optimization_trace["scenario_5"] = {"skipped": True, "skip_reason": "not_selected"}
+            logger.info("Phase4 scenario_5 skipped (not selected).")
+        elif s5_cfg["enabled"]:
+            s5_mode = _scenario_vote_mode(s5_cfg["overrides"])
             s5_profiles, s5_sim, s5_extra = _scenario5_optimize(
                 cfg,
                 llm,
@@ -1005,6 +1176,7 @@ def run_phase4(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
                 value_pool,
                 seed,
                 logger,
+                final_vote_mode=s5_mode,
                 overrides=s5_cfg["overrides"],
             )
             s5_voters = list(s5_extra.get("best_voters", []))
@@ -1016,6 +1188,7 @@ def run_phase4(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
                 s5_extra["meta"],
             )
             s5["candidate_profiles"] = s5_profiles
+            s5["simulation_mode"] = s5_mode
             scenarios_out["scenario_5"] = s5
             optimization_trace["scenario_5"] = s5_extra["trace"]
             logger.info(
@@ -1025,9 +1198,9 @@ def run_phase4(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
                 s5_extra["meta"].get("certainty_pass"),
             )
         else:
-            s5 = {"scenario_id": "scenario_5", "description": descriptions["scenario_5"], "skipped": True}
+            s5 = _skipped_payload("scenario_5", "disabled_in_config")
             scenarios_out["scenario_5"] = s5
-            optimization_trace["scenario_5"] = {"skipped": True}
+            optimization_trace["scenario_5"] = {"skipped": True, "skip_reason": "disabled_in_config"}
             logger.info("Phase4 scenario_5 skipped by config.")
         write_json(_phase4_path_for_scenario(cfg, run_dir, "scenario_5"), scenarios_out["scenario_5"])
         phase4_bar.update(1, detail="scenario_5")
@@ -1060,12 +1233,14 @@ def run_phase4(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
         "metadata": {
             "run_id": run_dir.name,
             "search_mode": getattr(cfg.phase4, "search_mode", "hybrid"),
+            "scenario_vote_mode": global_vote_mode,
             "repeats": repeats,
             "certainty_threshold": getattr(cfg.phase4, "certainty_threshold", 0.9),
             "seed": seed,
         },
         "assumptions": [
             "search_mode=hybrid unless overridden per scenario",
+            "scenario_vote_mode controls scenario simulation: deterministic or llm_full",
             "certainty_threshold>=0.90",
             "repeats=10 by default",
             "scenario_4 optimizes democrat core traits only",
@@ -1087,7 +1262,7 @@ def run_phase4(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
             "phase3_value_pool": str(phase3_values_path),
         },
         "limitations": [
-            "Hybrid search uses deterministic Monte Carlo for broad exploration and limited LLM validation.",
+            "Hybrid search uses deterministic Monte Carlo for broad exploration; llm_full only applies to scenario simulations/finals.",
             "Final narrative report is not generated in-code; report_pack.json is designed for downstream report generation.",
         ],
         "reporting_prompt_template": (

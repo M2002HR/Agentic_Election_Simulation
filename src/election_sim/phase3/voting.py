@@ -154,52 +154,218 @@ def build_debate_digest(transcript: Any, max_chars: int = 320) -> dict[str, Any]
     }
 
 
+def _normalize_ws(text: str) -> str:
+    return " ".join((text or "").strip().split())
+
+
+def _token_set(text: str) -> set[str]:
+    return {
+        tok
+        for tok in re.findall(r"[a-zA-Z0-9']+", (text or "").lower())
+        if len(tok) >= 4
+    }
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    return len(a & b) / max(1, len(a | b))
+
+
+def _valid_value_text(text: str, *, min_words: int, min_tokens: int) -> bool:
+    clean = _normalize_ws(text)
+    if len(clean) < 40:
+        return False
+    if len(clean.split()) < max(1, int(min_words)):
+        return False
+    tokens = _token_set(clean)
+    if len(tokens) < max(1, int(min_tokens)):
+        return False
+    lower = clean.lower()
+    banned = ("n/a", "same as above", "unknown", "none")
+    return not any(x in lower for x in banned)
+
+
+def _row_tokens(row: dict[str, str]) -> tuple[set[str], set[str], set[str]]:
+    return (
+        _token_set(str(row.get("china", ""))),
+        _token_set(str(row.get("healthcare", ""))),
+        _token_set(str(row.get("guns", ""))),
+    )
+
+
+def _is_near_duplicate(
+    row_tokens: tuple[set[str], set[str], set[str]],
+    existing_tokens: list[tuple[set[str], set[str], set[str]]],
+    *,
+    avg_threshold: float,
+    min_topic_threshold: float,
+) -> bool:
+    for prev in existing_tokens:
+        sims = [_jaccard(row_tokens[i], prev[i]) for i in range(3)]
+        avg_sim = sum(sims) / 3.0
+        if avg_sim >= avg_threshold:
+            return True
+        if min(sims) >= min_topic_threshold:
+            return True
+    return False
+
+
 def _value_pool_fallback(pool_size: int, seed: int) -> list[dict[str, Any]]:
     rng = random.Random(seed)
-    china_templates = [
-        "America should use alliances and targeted economic pressure to compete with China.",
-        "The US should prioritize industrial self-reliance and stronger deterrence toward China.",
-        "Avoid military escalation with China and focus on strategic diplomacy.",
-        "Economic competition with China should protect workers while keeping global stability.",
-        "National security should dominate US policy toward China's rising influence.",
+
+    china_goal = [
+        "keep manufacturing jobs in the United States",
+        "protect technology leadership in semiconductors and AI",
+        "avoid a costly military conflict while maintaining deterrence",
+        "reduce dependence on fragile supply chains",
+        "preserve US influence with allies in Asia",
+        "push back on unfair trade practices without a trade shock",
+        "defend cyber infrastructure and critical industries",
+        "keep inflation risks from geopolitical shocks manageable",
+        "strengthen national security while keeping markets stable",
+        "build long-term resilience against strategic rivals",
     ]
-    health_templates = [
-        "Healthcare should be affordable and broadly accessible, with cost controls.",
-        "A market-driven healthcare system with lower regulation is preferable.",
-        "Protecting pre-existing conditions is a red line for me.",
-        "Public-private balance in healthcare is better than ideological extremes.",
-        "Healthcare spending should be tied to measurable outcomes and prevention.",
+    china_tool = [
+        "through allied coordination and targeted export controls",
+        "with selective tariffs plus domestic investment incentives",
+        "by using diplomacy-first crisis management and military readiness",
+        "with strict technology safeguards and joint R&D with allies",
+        "through supply-chain diversification and strategic reserves",
+        "using predictable rules instead of sudden policy swings",
+        "via stronger maritime deterrence and burden-sharing alliances",
+        "by prioritizing economic statecraft over symbolic escalation",
+        "through enforceable trade standards and labor protections",
+        "with focused sanctions only on high-risk strategic sectors",
     ]
-    gun_templates = [
-        "Responsible ownership with stricter background checks is my preferred approach.",
-        "Second Amendment rights are central and broad restrictions should be avoided.",
-        "Community safety requires stronger enforcement against illegal gun use.",
-        "I support safe storage rules and training for firearm ownership.",
-        "Personal self-defense rights should remain protected with practical safeguards.",
+    china_guardrail = [
+        "while avoiding broad actions that would sharply raise consumer prices.",
+        "while keeping channels open for de-escalation during crises.",
+        "while protecting academic exchange that does not involve sensitive technology.",
+        "while preventing overreach that hurts small US businesses.",
+        "while ensuring Congress has oversight on major escalatory moves.",
+        "while balancing security with long-term economic competitiveness.",
+        "while minimizing unintended damage to allied economies.",
+        "while preserving room for climate and health cooperation.",
+        "while forcing clear accountability for coercive behavior.",
+        "while keeping military commitments realistic and sustainable.",
     ]
+
+    health_priority = [
+        "lowering monthly premiums for working families",
+        "protecting coverage for pre-existing conditions",
+        "reducing drug prices with transparent negotiation rules",
+        "expanding primary care access in underserved areas",
+        "cutting administrative waste and billing complexity",
+        "improving mental health access with measurable outcomes",
+        "protecting catastrophic coverage from surprise costs",
+        "rewarding prevention and chronic disease management",
+        "keeping rural hospitals financially viable",
+        "making insurance options easier to compare and switch",
+    ]
+    health_model = [
+        "using a mixed public-private insurance model",
+        "through regulated competition across private plans",
+        "with stronger public option availability where markets fail",
+        "by outcome-based reimbursement instead of fee-for-volume",
+        "through portable coverage that follows people across jobs",
+        "with state-led pilots under federal guardrails",
+        "by strict transparency mandates for hospitals and insurers",
+        "through incremental reforms rather than a single nationwide overhaul",
+        "with stronger antitrust enforcement in healthcare markets",
+        "by tying subsidies to measurable cost and quality targets",
+    ]
+    health_guardrail = [
+        "and I oppose reforms that add costs without improving access.",
+        "and I want annual public scorecards on cost and quality impact.",
+        "while preserving patient choice of doctor whenever feasible.",
+        "while keeping long-term federal spending on a sustainable path.",
+        "with special protection for low-income and high-risk patients.",
+        "while reducing out-of-network billing surprises aggressively.",
+        "and I support automatic enrollment for eligible uninsured residents.",
+        "while guaranteeing transparent appeals for denied claims.",
+        "and I want clear penalties for anti-competitive consolidation.",
+        "while maintaining independent evaluation of policy outcomes.",
+    ]
+
+    gun_rights = [
+        "I support lawful self-defense rights",
+        "I support responsible firearm ownership",
+        "I support the constitutional right to own firearms",
+        "I support legal ownership for vetted adults",
+        "I support community-level safety with individual rights",
+        "I support ownership with serious safety obligations",
+        "I support rights-based policy with enforceable safeguards",
+        "I support preserving legal ownership traditions",
+        "I support lawful carrying where training standards are met",
+        "I support individual protection rights with accountability",
+    ]
+    gun_safety = [
+        "with universal background checks for commercial transfers",
+        "with mandatory safe-storage standards around minors",
+        "with stronger domestic-violence disqualifier enforcement",
+        "with rapid reporting for lost or stolen firearms",
+        "with risk-based temporary removal orders under due process",
+        "with stronger training requirements for first-time buyers",
+        "with consistent age-verification and dealer compliance audits",
+        "with targeted interventions for repeat violent offenders",
+        "with better interstate data sharing for prohibited purchasers",
+        "with evidence-based violence prevention grants for local communities",
+    ]
+    gun_enforcement = [
+        "and I want clear penalties for illegal trafficking networks.",
+        "and I want prosecutions to focus on violent misuse, not technical errors.",
+        "while protecting due process and transparent judicial review.",
+        "and I want compliance checks to be predictable and apolitical.",
+        "while keeping enforcement resources focused on high-risk actors.",
+        "and I oppose broad rules that punish lawful owners without results.",
+        "with regular public reporting on what policies actually reduce harm.",
+        "while improving community trust in enforcement outcomes.",
+        "and I want stronger tracing capacity for crime guns.",
+        "while preserving lawful sporting and hunting use.",
+    ]
+
     out: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
     i = 0
     while len(out) < pool_size:
-        c = china_templates[(i + rng.randint(0, 4)) % len(china_templates)]
-        h = health_templates[(i + rng.randint(0, 4)) % len(health_templates)]
-        g = gun_templates[(i + rng.randint(0, 4)) % len(gun_templates)]
-        key = (c, h, g)
-        if key not in seen:
-            seen.add(key)
-            out.append({"profile_id": f"vp_{len(out):03d}", "china": c, "healthcare": h, "guns": g})
         i += 1
-        if i > pool_size * 20 and len(out) < pool_size:
-            # Ensure completion by allowing controlled suffix variants.
-            suffix = len(out)
-            out.append(
-                {
-                    "profile_id": f"vp_{len(out):03d}",
-                    "china": f"{c} Variant {suffix}",
-                    "healthcare": f"{h} Variant {suffix}",
-                    "guns": f"{g} Variant {suffix}",
-                }
+        base = i - 1
+        c = (
+            f"My China policy should {china_goal[base % len(china_goal)]} "
+            f"{china_tool[(base * 3 + 7) % len(china_tool)]} "
+            f"{china_guardrail[(base * 5 + 11) % len(china_guardrail)]}"
+        )
+        h = (
+            f"My healthcare priority is {health_priority[(base * 2 + 3) % len(health_priority)]}, "
+            f"{health_model[(base * 7 + 5) % len(health_model)]}, "
+            f"{health_guardrail[(base * 11 + 9) % len(health_guardrail)]}"
+        )
+        g = (
+            f"{gun_rights[(base * 13 + 1) % len(gun_rights)]} "
+            f"{gun_safety[(base * 17 + 4) % len(gun_safety)]}, "
+            f"{gun_enforcement[(base * 19 + 6) % len(gun_enforcement)]}"
+        )
+        key = (_normalize_ws(c), _normalize_ws(h), _normalize_ws(g))
+        if key in seen:
+            # deterministic extra variation if modular collisions occur
+            alt = rng.randint(1000, 9999)
+            key = (
+                f"{key[0]} (Priority Frame {alt})",
+                f"{key[1]} (Policy Frame {alt})",
+                f"{key[2]} (Safety Frame {alt})",
             )
+        seen.add(key)
+        out.append(
+            {
+                "profile_id": f"vp_{len(out):03d}",
+                "china": key[0],
+                "healthcare": key[1],
+                "guns": key[2],
+            }
+        )
     return out
 
 
@@ -213,11 +379,23 @@ def generate_value_pool(
     pool_size = int(getattr(cfg.phase3.values, "pool_size", 200) or 200)
     batch_size = int(getattr(cfg.phase3, "llm_value_pool_batch_size", 25) or 25)
     batch_size = max(5, min(batch_size, pool_size))
-    max_llm_batches = min(6, max(1, ((pool_size + batch_size - 1) // batch_size) + 1))
+    cfg_max_batches = int(getattr(cfg.phase3, "max_llm_batches", 12) or 12)
+    max_llm_batches = max(1, cfg_max_batches)
+    if max_llm_batches > 64:
+        max_llm_batches = 64
     rng = random.Random(seed)
+    min_words = int(getattr(cfg.phase3.values, "min_words_per_field", 15) or 15)
+    min_tokens = int(getattr(cfg.phase3.values, "min_token_count_per_field", 6) or 6)
+    near_dup_avg = float(
+        getattr(cfg.phase3.values, "near_duplicate_avg_jaccard_threshold", 0.82) or 0.82
+    )
+    near_dup_topic = float(
+        getattr(cfg.phase3.values, "near_duplicate_min_topic_threshold", 0.72) or 0.72
+    )
 
     pool: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
+    token_signatures: list[tuple[set[str], set[str], set[str]]] = []
     llm_calls = 0
     llm_failures = 0
     logger.info(
@@ -234,7 +412,10 @@ def generate_value_pool(
             prompt = (
                 "Generate diverse US voter value profiles for election simulation.\n"
                 f"Return exactly {need} profiles.\n"
-                "Each profile must contain text values for: china, healthcare, guns.\n"
+                "Each profile must contain long-form text values for: china, healthcare, guns.\n"
+                "Every profile must be materially different from other profiles.\n"
+                "Avoid repeated sentence templates, repeated openings, and near-duplicate phrasing.\n"
+                "Each field should be at least 15 words and include specific tradeoffs or constraints.\n"
                 "Output JSON only with schema: {\"profiles\":[{\"china\":...,\"healthcare\":...,\"guns\":...}]}\n"
                 "Profiles should be ideologically diverse and non-duplicate.\n"
                 f"Context digest: {json.dumps(debate_digest, ensure_ascii=False)}\n"
@@ -247,13 +428,30 @@ def generate_value_pool(
                 for row in rows:
                     if not isinstance(row, dict):
                         continue
-                    c = str(row.get("china", "")).strip()
-                    h = str(row.get("healthcare", "")).strip()
-                    g = str(row.get("guns", "")).strip()
+                    c = _normalize_ws(str(row.get("china", "")))
+                    h = _normalize_ws(str(row.get("healthcare", "")))
+                    g = _normalize_ws(str(row.get("guns", "")))
                     key = (c, h, g)
-                    if not c or not h or not g or key in seen:
+                    if not c or not h or not g:
+                        continue
+                    if not (
+                        _valid_value_text(c, min_words=min_words, min_tokens=min_tokens)
+                        and _valid_value_text(h, min_words=min_words, min_tokens=min_tokens)
+                        and _valid_value_text(g, min_words=min_words, min_tokens=min_tokens)
+                    ):
+                        continue
+                    if key in seen:
+                        continue
+                    row_sig = _row_tokens({"china": c, "healthcare": h, "guns": g})
+                    if _is_near_duplicate(
+                        row_sig,
+                        token_signatures,
+                        avg_threshold=near_dup_avg,
+                        min_topic_threshold=near_dup_topic,
+                    ):
                         continue
                     seen.add(key)
+                    token_signatures.append(row_sig)
                     pool.append(
                         {
                             "profile_id": f"vp_{len(pool):03d}",
@@ -304,16 +502,34 @@ def generate_value_pool(
             )
             fallback = _value_pool_fallback(pool_size=pool_size, seed=seed + rng.randint(0, 9999))
             for row in fallback:
-                key = (row["china"], row["healthcare"], row["guns"])
+                c = _normalize_ws(str(row["china"]))
+                h = _normalize_ws(str(row["healthcare"]))
+                g = _normalize_ws(str(row["guns"]))
+                key = (c, h, g)
                 if key in seen:
                     continue
+                if not (
+                    _valid_value_text(c, min_words=min_words, min_tokens=min_tokens)
+                    and _valid_value_text(h, min_words=min_words, min_tokens=min_tokens)
+                    and _valid_value_text(g, min_words=min_words, min_tokens=min_tokens)
+                ):
+                    continue
+                row_sig = _row_tokens({"china": c, "healthcare": h, "guns": g})
+                if _is_near_duplicate(
+                    row_sig,
+                    token_signatures,
+                    avg_threshold=near_dup_avg,
+                    min_topic_threshold=near_dup_topic,
+                ):
+                    continue
                 seen.add(key)
+                token_signatures.append(row_sig)
                 pool.append(
                     {
                         "profile_id": f"vp_{len(pool):03d}",
-                        "china": row["china"],
-                        "healthcare": row["healthcare"],
-                        "guns": row["guns"],
+                        "china": c,
+                        "healthcare": h,
+                        "guns": g,
                     }
                 )
                 pbar.update(1, detail="fallback")
@@ -321,12 +537,16 @@ def generate_value_pool(
                     break
 
     diversity_ratio = len(seen) / max(1, len(pool))
+    lexical_coverage = len(
+        set().union(*[t[0] | t[1] | t[2] for t in token_signatures]) if token_signatures else set()
+    )
     logger.info(
-        "Phase3 value-pool generation finished | size=%d llm_calls=%d llm_failures=%d diversity_ratio=%.3f",
+        "Phase3 value-pool generation finished | size=%d llm_calls=%d llm_failures=%d diversity_ratio=%.3f lexical_coverage=%d",
         len(pool),
         llm_calls,
         llm_failures,
         diversity_ratio,
+        lexical_coverage,
     )
     return {
         "metadata": {
@@ -335,6 +555,12 @@ def generate_value_pool(
             "llm_calls": llm_calls,
             "llm_failures": llm_failures,
             "diversity_ratio": diversity_ratio,
+            "lexical_coverage": lexical_coverage,
+            "min_words_per_field": min_words,
+            "min_token_count_per_field": min_tokens,
+            "near_duplicate_avg_jaccard_threshold": near_dup_avg,
+            "near_duplicate_min_topic_threshold": near_dup_topic,
+            "max_llm_batches": max_llm_batches,
         },
         "profiles": pool[:pool_size],
     }
@@ -476,6 +702,9 @@ def run_phase3(cfg, llm, run_dir: Path, logger) -> dict[str, Any]:
             trait_distributions=dist_dict,
             value_pool=value_pool.get("profiles", []),
             assignment_mode=cfg.phase3.values.assignment_mode,
+            unique_assignment_when_possible=bool(
+                getattr(cfg.phase3.values, "unique_assignment_when_possible", True)
+            ),
         )
         logger.info("Phase3 voting started | voters=%d", len(voters))
 

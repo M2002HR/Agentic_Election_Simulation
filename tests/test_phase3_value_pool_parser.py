@@ -1,4 +1,4 @@
-from election_sim.phase3.voting import _extract_profiles_loose
+from election_sim.phase3.voting import _extract_profiles_loose, _value_pool_fallback
 
 
 def test_extract_profiles_loose_handles_valid_json():
@@ -46,3 +46,10 @@ def test_extract_profiles_loose_salvages_truncated_json():
     assert len(rows) == 2
     assert rows[0]["healthcare"] == "h1"
     assert rows[1]["china"] == "c2"
+
+
+def test_value_pool_fallback_generates_unique_profiles():
+    rows = _value_pool_fallback(pool_size=200, seed=42)
+    assert len(rows) == 200
+    keys = {(r["china"], r["healthcare"], r["guns"]) for r in rows}
+    assert len(keys) == 200

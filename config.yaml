@@ -155,10 +155,16 @@ phase3:
   use_debate_digest: true
   digest_max_chars_per_field: 320
   llm_value_pool_batch_size: 25
+  max_llm_batches: 12
   values:
     pool_size: 200
     output_pool_json: phase3/value_pool.json
     assignment_mode: seeded_random
+    unique_assignment_when_possible: true
+    min_words_per_field: 15
+    min_token_count_per_field: 6
+    near_duplicate_avg_jaccard_threshold: 0.82
+    near_duplicate_min_topic_threshold: 0.72
     sample_value_profile:
       china: America must remain the top global power and any external threat to that status should be strongly countered.
       healthcare: Healthcare is acceptable as long as it does not weaken US national strength and fiscal stability.
@@ -187,6 +193,7 @@ phase3:
 
 phase4:
   repeats: 10
+  scenario_vote_mode: llm_full
   certainty_threshold: 0.9
   search_mode: hybrid
   llm_validation_top_k: 5
@@ -225,6 +232,7 @@ phase4:
 
 phase5:
   repeats: 10
+  scenario_vote_mode: llm_full
   llm_validation_sample_size: 24
   enable_llm_validation: true
   confidence_shift_sensitivity: 8.0

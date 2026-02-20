@@ -154,6 +154,7 @@ def generate_voters(
     value_pool: list[dict[str, Any]] | None = None,
     assignment_mode: str = "seeded_random",
     source_scenario: str = "phase3_default",
+    unique_assignment_when_possible: bool = True,
 ) -> list[Voter]:
     rng = random.Random(seed)
     trait_distributions = trait_distributions or {}
@@ -167,10 +168,24 @@ def generate_voters(
         else:
             sampled_by_trait[trait] = [rng.randint(0, 10) for _ in range(count)]
 
+    value_assignment_indices: list[int] = []
+    if value_pool and assignment_mode == "seeded_random":
+        if unique_assignment_when_possible and len(value_pool) >= count:
+            # When possible, assign each voter a unique value profile for better diversity.
+            value_assignment_indices = list(range(len(value_pool)))
+            rng.shuffle(value_assignment_indices)
+            value_assignment_indices = value_assignment_indices[:count]
+        else:
+            # Reuse profiles only when pool is smaller than voter count.
+            value_assignment_indices = list(range(len(value_pool)))
+            rng.shuffle(value_assignment_indices)
+            while len(value_assignment_indices) < count:
+                value_assignment_indices.append(rng.randrange(len(value_pool)))
+
     for i in range(count):
         traits = {trait: sampled_by_trait[trait][i] for trait in trait_names}
         if value_pool and assignment_mode == "seeded_random":
-            idx = rng.randrange(len(value_pool))
+            idx = value_assignment_indices[i]
             profile = value_pool[idx]
         elif value_pool:
             profile = value_pool[i % len(value_pool)]

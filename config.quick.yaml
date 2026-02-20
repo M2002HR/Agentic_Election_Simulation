@@ -150,9 +150,9 @@ phase3:
   debate_path: phase2/debate_transcript.json
   use_debate_digest: true
   digest_max_chars_per_field: 320
-  llm_value_pool_batch_size: 6
+  llm_value_pool_batch_size: 5
   values:
-    pool_size: 12
+    pool_size: 6
     output_pool_json: phase3/value_pool.json
     assignment_mode: seeded_random
     sample_value_profile:
@@ -160,7 +160,7 @@ phase3:
       healthcare: Healthcare is acceptable as long as it does not weaken US national strength and fiscal stability.
       guns: I support carrying firearms to protect myself and my family.
   voters:
-    count: 12
+    count: 6
     traits:
       - wisdom
       - fear
@@ -182,11 +182,12 @@ phase3:
     output_sample_analysis_json: phase3/sample_voter_analysis.json
 
 phase4:
-  repeats: 2
+  repeats: 1
+  scenario_vote_mode: llm_full
   certainty_threshold: 0.9
   search_mode: fast_approx
   llm_validation_top_k: 1
-  llm_validation_sample_size: 4
+  llm_validation_sample_size: 2
   trait_level_mapping:
     very_low: 1.0
     low: 3.0
@@ -220,8 +221,9 @@ phase4:
   output_report_pack_json: phase4/report_pack.json
 
 phase5:
-  repeats: 2
-  llm_validation_sample_size: 4
+  repeats: 1
+  scenario_vote_mode: llm_full
+  llm_validation_sample_size: 2
   enable_llm_validation: true
   confidence_shift_sensitivity: 6.0
   margin_pct_alert_threshold: 8.0

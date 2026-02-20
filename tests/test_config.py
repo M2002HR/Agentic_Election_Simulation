@@ -10,9 +10,11 @@ def test_load_config_extended_schema():
     assert cfg.phase3.values.pool_size > 0
     assert cfg.phase3.voters.count > 0
     assert cfg.phase4.repeats >= 1
+    assert cfg.phase4.scenario_vote_mode in {"deterministic", "llm_full"}
     assert 0 < cfg.phase4.certainty_threshold <= 1
     assert cfg.phase4.search_mode in {"hybrid", "full_llm", "fast_approx"}
     assert cfg.phase5.repeats >= 1
+    assert cfg.phase5.scenario_vote_mode in {"deterministic", "llm_full"}
     assert cfg.phase5.llm_validation_sample_size >= 1
     assert isinstance(cfg.phase5.enable_llm_validation, bool)
 

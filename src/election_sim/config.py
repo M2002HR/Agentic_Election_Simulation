@@ -205,6 +205,11 @@ class Phase3ValuesConfig(BaseModel):
     pool_size: int = 200
     output_pool_json: str = "phase3/value_pool.json"
     assignment_mode: Literal["seeded_random"] = "seeded_random"
+    unique_assignment_when_possible: bool = True
+    min_words_per_field: int = 15
+    min_token_count_per_field: int = 6
+    near_duplicate_avg_jaccard_threshold: float = 0.82
+    near_duplicate_min_topic_threshold: float = 0.72
     sample_value_profile: dict[str, str] = Field(
         default_factory=lambda: {
             "china": (
@@ -243,6 +248,7 @@ class Phase3Config(BaseModel):
     use_debate_digest: bool = True
     digest_max_chars_per_field: int = 320
     llm_value_pool_batch_size: int = 25
+    max_llm_batches: int = 12
 
 
 class Phase4Scenario(BaseModel):
@@ -258,6 +264,7 @@ class Phase4Config(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     repeats: int = 10
+    scenario_vote_mode: Literal["deterministic", "llm_full"] = "deterministic"
     certainty_threshold: float = 0.9
     search_mode: Literal["hybrid", "full_llm", "fast_approx"] = "hybrid"
     llm_validation_top_k: int = 5
@@ -305,6 +312,7 @@ class Phase5Config(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     repeats: int = 10
+    scenario_vote_mode: Literal["deterministic", "llm_full"] = "deterministic"
     llm_validation_sample_size: int = 24
     enable_llm_validation: bool = True
     confidence_shift_sensitivity: float = 8.0
