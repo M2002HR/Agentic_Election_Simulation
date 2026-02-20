@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 .key_state.json
 runs/
+runs_quick/
 .pytest_cache/
 dist/
 build/

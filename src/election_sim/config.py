@@ -292,6 +292,44 @@ class Phase4Config(BaseModel):
     debate_path: Optional[str] = None
 
 
+class Phase5Scenario(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    description: str
+    enabled: bool = True
+    overrides: dict[str, Any] = Field(default_factory=dict)
+
+
+class Phase5Config(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    repeats: int = 10
+    llm_validation_sample_size: int = 24
+    enable_llm_validation: bool = True
+    confidence_shift_sensitivity: float = 8.0
+    margin_pct_alert_threshold: float = 5.0
+    scenarios: list[Phase5Scenario] = Field(
+        default_factory=lambda: [
+            Phase5Scenario(
+                id="scenario_6_republican_win",
+                description="Design electorate and candidate traits so Republican wins decisively.",
+            ),
+            Phase5Scenario(
+                id="scenario_7_healthcare_shock",
+                description="Healthcare-cost shock electorate with issue-salience shift.",
+            ),
+            Phase5Scenario(
+                id="scenario_8_polarized_tossup",
+                description="Highly polarized electorate with near tie and sensitivity stress test.",
+            ),
+        ]
+    )
+    output_scenario_prefix: str = "phase5/"
+    output_comparison_json: str = "phase5/comparison.json"
+    output_report_pack_json: str = "phase5/report_pack.json"
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -302,6 +340,7 @@ class Config(BaseModel):
     phase2: Phase2Config
     phase3: Phase3Config = Field(default_factory=Phase3Config)
     phase4: Phase4Config = Field(default_factory=Phase4Config)
+    phase5: Phase5Config = Field(default_factory=Phase5Config)
 
 
 def load_config(config_path: str | Path) -> Config:

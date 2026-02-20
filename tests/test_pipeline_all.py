@@ -6,6 +6,7 @@ from election_sim.phase1.eval import run_phase1
 from election_sim.phase2.debate import run_debate
 from election_sim.phase3.voting import run_phase3
 from election_sim.phase4.runner import run_phase4
+from election_sim.phase5.runner import run_phase5
 from election_sim.utils.logging import setup_logger
 
 
@@ -72,6 +73,8 @@ def test_full_pipeline_builds_core_artifacts(tmp_path: Path):
     cfg.phase4.repeats = 2
     cfg.phase4.llm_validation_top_k = 2
     cfg.phase4.llm_validation_sample_size = 4
+    cfg.phase5.repeats = 2
+    cfg.phase5.llm_validation_sample_size = 4
 
     run_dir = tmp_path / "run"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -82,6 +85,7 @@ def test_full_pipeline_builds_core_artifacts(tmp_path: Path):
     run_debate(cfg, llm, str(run_dir), logger)
     run_phase3(cfg, llm, run_dir, logger)
     run_phase4(cfg, llm, run_dir, logger)
+    run_phase5(cfg, llm, run_dir, logger)
 
     expected = [
         "phase1/candidates.json",
@@ -98,6 +102,11 @@ def test_full_pipeline_builds_core_artifacts(tmp_path: Path):
         "phase4/comparison.json",
         "phase4/optimization_trace.json",
         "phase4/report_pack.json",
+        "phase5/scenario_6_republican_win.json",
+        "phase5/scenario_7_healthcare_shock.json",
+        "phase5/scenario_8_polarized_tossup.json",
+        "phase5/comparison.json",
+        "phase5/report_pack.json",
     ]
     for rel in expected:
         assert (run_dir / rel).exists(), rel

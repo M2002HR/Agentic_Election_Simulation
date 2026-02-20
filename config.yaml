@@ -222,3 +222,25 @@ phase4:
   output_comparison_json: phase4/comparison.json
   output_optimization_trace_json: phase4/optimization_trace.json
   output_report_pack_json: phase4/report_pack.json
+
+phase5:
+  repeats: 10
+  llm_validation_sample_size: 24
+  enable_llm_validation: true
+  confidence_shift_sensitivity: 8.0
+  margin_pct_alert_threshold: 5.0
+  scenarios:
+    - id: scenario_6_republican_win
+      description: Republican win stress-test
+      enabled: true
+      overrides:
+        value_pool_keep_ratio: 0.85
+    - id: scenario_7_healthcare_shock
+      description: Healthcare-cost shock electorate
+      enabled: true
+    - id: scenario_8_polarized_tossup
+      description: Polarized close race
+      enabled: true
+  output_scenario_prefix: phase5/
+  output_comparison_json: phase5/comparison.json
+  output_report_pack_json: phase5/report_pack.json

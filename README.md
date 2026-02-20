@@ -1,16 +1,17 @@
 # Agentic Election Simulation
 
-Multi-agent US election simulation pipeline implemented as 4 phases:
+Multi-agent US election simulation pipeline implemented as 5 phases:
 
 1. `phase1`: candidate persona simulation + evaluation + honesty stress test
 2. `phase2`: full moderated debate simulation + question quality checks
 3. `phase3`: voter simulation + value-pool generation + vote summary
 4. `phase4`: scenarios 1..5 + comparative analysis + optimization + report pack
+5. `phase5`: additional stress-test scenarios (6..8) + defensibility checks + report pack
 
 The project is designed for:
 - reproducibility with fixed random seeds
 - realistic execution under API quota/rate limits
-- report-ready outputs (`phase4/report_pack.json`)
+- report-ready outputs (`phase4/report_pack.json`, `phase5/report_pack.json`)
 
 ## What Is Implemented
 
@@ -74,6 +75,23 @@ Artifacts:
 - `phase4/optimization_trace.json`
 - `phase4/report_pack.json`
 
+## Phase 5
+- Additional scenario runner for advanced evaluation after phase4
+- `scenario_6_republican_win`: explicit Republican-win stress test
+- `scenario_7_healthcare_shock`: healthcare-cost shock with issue-salience shift
+- `scenario_8_polarized_tossup`: highly polarized near-tossup stress scenario
+- Defensibility layer per scenario:
+  - sampled LLM validation
+  - confidence-shift sensitivity analysis
+- Comparative table and report-ready pack
+
+Artifacts:
+- `phase5/scenario_6_republican_win.json`
+- `phase5/scenario_7_healthcare_shock.json`
+- `phase5/scenario_8_polarized_tossup.json`
+- `phase5/comparison.json`
+- `phase5/report_pack.json`
+
 ## CLI Commands
 
 The module entrypoint is `python -m election_sim`.
@@ -84,6 +102,7 @@ Available commands:
 - `phase2`
 - `phase3`
 - `phase4`
+- `phase5`
 - `all`
 
 Common flags:
@@ -98,6 +117,7 @@ PYTHONPATH=src python -m election_sim phase1 --config config.yaml
 PYTHONPATH=src python -m election_sim phase2 --config config.yaml
 PYTHONPATH=src python -m election_sim phase3 --config config.yaml
 PYTHONPATH=src python -m election_sim phase4 --config config.yaml
+PYTHONPATH=src python -m election_sim phase5 --config config.yaml
 PYTHONPATH=src python -m election_sim all --config config.yaml
 ```
 
@@ -105,6 +125,7 @@ Reuse a previous run directory:
 
 ```bash
 PYTHONPATH=src python -m election_sim phase4 --config config.yaml --run-id 20260219_120000
+PYTHONPATH=src python -m election_sim phase5 --config config.yaml --run-id 20260219_120000
 ```
 
 ## Setup
@@ -173,6 +194,15 @@ Recommended workflow:
 - `phase4.scenarios[].enabled`
 - `phase4.scenarios[].overrides`
 
+## Phase 5
+- `phase5.repeats`
+- `phase5.enable_llm_validation`
+- `phase5.llm_validation_sample_size`
+- `phase5.confidence_shift_sensitivity`
+- `phase5.margin_pct_alert_threshold`
+- `phase5.scenarios[].enabled`
+- `phase5.scenarios[].overrides`
+
 ## Quick Validation Run
 
 Clean quick runs, execute quick config, inspect outputs:
@@ -190,6 +220,7 @@ latest=$(ls -1dt runs_quick/*/ | head -n1)
 echo "$latest"
 python -m json.tool "${latest}phase3/value_pool.json" | head -n 60
 python -m json.tool "${latest}phase4/report_pack.json" | head -n 80
+python -m json.tool "${latest}phase5/report_pack.json" | head -n 80
 ```
 
 ## Full/Main Run
@@ -219,6 +250,7 @@ Progress bars are shown for:
 - phase2 question generation/debate
 - phase3 pipeline/value generation/voting
 - phase4 scenario and optimization loops
+- phase5 scenario simulations and validation loops
 
 Monitor live logs:
 
@@ -234,6 +266,7 @@ Main run writes to `runs/<run_id>/` (or `runs_quick/<run_id>/` if configured):
 - `phase2/*`
 - `phase3/*`
 - `phase4/*`
+- `phase5/*`
 - `run.log`
 - `trace.jsonl`
 - `config.resolved.yaml`
@@ -241,14 +274,14 @@ Main run writes to `runs/<run_id>/` (or `runs_quick/<run_id>/` if configured):
 ## Report Workflow
 
 For final report generation, use:
-- `phase4/report_pack.json`
+- `phase4/report_pack.json` (core project scenarios 1..5)
+- `phase5/report_pack.json` (additional stress-test scenarios 6..8)
 
 This file includes:
 - run metadata
 - per-phase summaries (if available)
-- scenario outputs (1..5)
+- scenario outputs
 - scenario comparison
-- optimization trace reference
 - key metrics table
 - assumptions and limitations
 
@@ -267,6 +300,7 @@ Tests cover:
 - phase3 voter generation/distribution reproducibility
 - phase3 malformed JSON value-pool parsing
 - phase4 report pack schema and scenario behavior
+- phase5 report pack schema and republican-win scenario behavior
 - end-to-end fake-LLM pipeline smoke
 
 ## Troubleshooting

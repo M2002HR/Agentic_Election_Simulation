@@ -12,6 +12,7 @@ from election_sim.phase1.eval import run_phase1
 from election_sim.phase2.debate import run_debate
 from election_sim.phase3.voting import run_phase3
 from election_sim.phase4.runner import run_phase4
+from election_sim.phase5.runner import run_phase5
 from election_sim.utils.io import ensure_dir
 from election_sim.utils.logging import setup_logger
 
@@ -139,13 +140,27 @@ def cmd_all(cfg_path: str, run_id: str | None = None) -> None:
     run_phase3(cfg, llm_phase3, Path(run_dir), logger)
 
     run_phase4(cfg, llm_phase3, Path(run_dir), logger)
+    run_phase5(cfg, llm_phase3, Path(run_dir), logger)
     logger.info("Command finish: all")
+    print(f"Run complete: {run_dir}")
+
+
+def cmd_phase5(cfg_path: str, run_id: str | None = None) -> None:
+    cfg = load_config(cfg_path)
+    run_dir, logger = _init_run(cfg, run_id=run_id)
+    logger.info("Command start: phase5 | run_dir=%s", run_dir)
+    llm = build_llm(cfg, run_dir, model_name=cfg.llm.voter_model_name or cfg.llm.model_name)
+    run_phase5(cfg, llm, Path(run_dir), logger)
+    logger.info("Command finish: phase5")
     print(f"Run complete: {run_dir}")
 
 
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="election_sim")
-    p.add_argument("command", choices=["smoke-test", "phase1", "phase2", "phase3", "phase4", "all"])
+    p.add_argument(
+        "command",
+        choices=["smoke-test", "phase1", "phase2", "phase3", "phase4", "phase5", "all"],
+    )
     p.add_argument("--config", default="config.yaml")
     p.add_argument("--run-id", default=None)
     args = p.parse_args(argv)
@@ -160,6 +175,8 @@ def main(argv: list[str] | None = None) -> None:
         cmd_phase3(args.config, args.run_id)
     elif args.command == "phase4":
         cmd_phase4(args.config, args.run_id)
+    elif args.command == "phase5":
+        cmd_phase5(args.config, args.run_id)
     elif args.command == "all":
         cmd_all(args.config, args.run_id)
     else:
