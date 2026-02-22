@@ -192,7 +192,7 @@ phase3:
     output_sample_analysis_json: phase3/sample_voter_analysis.json
 
 phase4:
-  repeats: 10
+  repeats: 1
   scenario_vote_mode: llm_full
   certainty_threshold: 0.9
   search_mode: hybrid
@@ -231,7 +231,7 @@ phase4:
   output_report_pack_json: phase4/report_pack.json
 
 phase5:
-  repeats: 10
+  repeats: 1
   scenario_vote_mode: llm_full
   llm_validation_sample_size: 24
   enable_llm_validation: true
